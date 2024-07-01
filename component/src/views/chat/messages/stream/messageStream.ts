@@ -23,6 +23,9 @@ export class MessageStream {
   private _endStreamAfterOperation?: boolean;
   private static readonly HTML_CONTENT_PLACEHOLDER = 'htmlplaceholder'; // used for extracting at end and for isStreaming
 
+  private _speechTextBuffer = '';
+  private static readonly DELIMITERS = [". ", "? ", "! ", ", ", "; ", ": "];
+
   constructor(messages: MessagesBase) {
     this._messages = messages;
   }
@@ -48,8 +51,8 @@ export class MessageStream {
   private setInitialState(streamType: 'text' | 'html', content: string, role?: string) {
     this._streamType = streamType;
     role ??= MessageUtils.AI_ROLE;
-    // does not overwrite previous message for simplicity as otherwise users would need to return first response with
-    // {..., overwrite: false} and others as {..., ovewrite: true} which would be too complex on their end
+	// does not overwrite previous message for simplicity as otherwise users would need to return first response with
+    // {..., overwrite: false} and others as {..., overwrite: true} which would be too complex on their end
     this._elements =
       streamType === 'text'
         ? this._messages.addNewTextMessage(content, role)
@@ -59,6 +62,7 @@ export class MessageStream {
     this._activeMessageRole = role;
     this._message = {role: this._activeMessageRole, [streamType]: this._streamedContent};
     this._messages.messages.push(this._message);
+    this.handleSpeechStream(content);
   }
 
   private updateBasedOnType(content: string, expectedType: string, bubbleElement: HTMLElement, isOverwrite = false) {
@@ -71,6 +75,7 @@ export class MessageStream {
     this._streamedContent = isOverwrite ? text : this._streamedContent + text;
     this._messages.textElementsToText[this._messages.textElementsToText.length - 1][1] = this._streamedContent;
     this._messages.renderText(bubbleElement, this._streamedContent);
+    this.handleSpeechStream(text);
   }
 
   private updateHTML(html: string, bubbleElement: HTMLElement, isOverwrite: boolean) {
@@ -85,6 +90,36 @@ export class MessageStream {
     }
   }
 
+  private handleSpeechStream(content: string) {
+    // if (this._delimiterReached) {
+    //   if (this._messages.textToSpeech) TextToSpeech.speak(content, this._messages.textToSpeech);
+    //   return;
+    // }
+
+    this._speechTextBuffer += content;
+    const delimiters = MessageStream.DELIMITERS;
+
+    let delimiterIndex = -1;
+    for (const delimiter of delimiters) {
+      const index = this._speechTextBuffer.lastIndexOf(delimiter);
+      if (index !== -1 && (delimiterIndex === -1 || index < delimiterIndex)) {
+        delimiterIndex = index + delimiter.length - 1;
+      }
+    }
+
+    if (delimiterIndex !== -1) {
+      const textToSpeak = this._speechTextBuffer.substring(0, delimiterIndex + 1);
+      this._speechTextBuffer = this._speechTextBuffer.substring(delimiterIndex + 1);
+
+
+        // this._delimiterReached = true;
+        if (this._messages.textToSpeech) TextToSpeech.speak(textToSpeak, this._messages.textToSpeech);
+
+    } else if (this._hasStreamEnded && this._speechTextBuffer.length > 0) {
+      if (this._messages.textToSpeech) TextToSpeech.speak(this._speechTextBuffer, this._messages.textToSpeech);
+    }
+  }
+
   public finaliseStreamedMessage() {
     const {textElementsToText} = this._messages;
     if (this._endStreamAfterOperation) return;
@@ -94,7 +129,7 @@ export class MessageStream {
     if (this._streamType === 'text') {
       textElementsToText[textElementsToText.length - 1][1] = this._streamedContent;
       if (this._message) this._message.text = this._streamedContent;
-      if (this._messages.textToSpeech) TextToSpeech.speak(this._streamedContent, this._messages.textToSpeech);
+    //   if (this._messages.textToSpeech) TextToSpeech.speak(this._streamedContent, this._messages.textToSpeech);
     } else if (this._streamType === 'html') {
       if (this._streamedContent === MessageStream.HTML_CONTENT_PLACEHOLDER) {
         this._streamedContent = this._elements.bubbleElement?.innerHTML || '';
@@ -106,6 +141,7 @@ export class MessageStream {
       this._messages.sendClientUpdate(MessagesBase.createMessageContent(this._message), false);
     }
     this._hasStreamEnded = true;
+    this.handleSpeechStream('');
   }
 
   public markFileAdded() {
